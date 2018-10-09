@@ -9,6 +9,7 @@ from fast_rcnn.config import cfg
 from fast_rcnn.test import im_detect2
 from fast_rcnn.nms_wrapper import nms
 from utils.timer import Timer
+from camera_to_marker import aruco_camPose
 
 import numpy as np
 import os, cv2
@@ -284,7 +285,6 @@ def convert_bbox_to_centroid(list_boxes, list_masks):
         if len(list_centroids) > 0:
             for l in list_centroids:
                 list_final.append(l)
-        
     return list_final
 
 
@@ -375,6 +375,8 @@ if __name__ == '__main__':
     arr_rgb = np.asarray(rgb[:, :, :])
     arr_depth = np.asarray(depth[:, :])
 
+    # get camera to aruco marker transformation
+    camera_to_marker = aruco_camPose(arr_rgb)
     import matplotlib.pyplot as plt
     #plt.imshow(arr_depth)
     #plt.show()
@@ -383,34 +385,34 @@ if __name__ == '__main__':
         list_boxes, list_masks = run_affordance_net_asus(net, arr_rgb)
         print 'len list boxes: ', len(list_boxes)
 
-    while(selected_obj_aff < 1):
-        # run detection
-        if len(list_boxes) < 1:
-            continue ## no object found
-
-            list_obj_centroids = convert_bbox_to_centroid(list_boxes, list_masks)
-
-            # select object and affordance to project to 3D
-            obj_id = 6 # cup
-            aff_id = 5  # grasp affordance
-
-            selected_obj_aff = select_object_and_aff(list_obj_centroids, obj_id, aff_id) 
-
-            # get depth value from depth map                        
-            dval = arr_depth[selected_obj_aff[3], selected_obj_aff[2]]
-            print(selected_obj_aff[3], selected_obj_aff[2])
-            if dval != 'nan':
-                # find 3D point
-                p3Dc = project_to_3D(selected_obj_aff[2], selected_obj_aff[3], dval, ic)
-                obj_pose_3D = PoseStamped()
-                obj_pose_3D.header.frame_id = "camera_depth_optical_frame"
-                
-                obj_pose_3D.pose.position.x = p3Dc[0]
-                obj_pose_3D.pose.position.y = p3Dc[1]
-                obj_pose_3D.pose.position.z = p3Dc[2]
-                obj_pose_3D.pose.orientation.x = 0
-                obj_pose_3D.pose.orientation.y = 0
-                obj_pose_3D.pose.orientation.z = 0
-                obj_pose_3D.pose.orientation.w = 1 ## no rotation
-                # publish pose
-                pub_obj_pose_3D.publish(obj_pose_3D)
+    while(len(list_boxes) >= 1):
+        list_obj_centroids = convert_bbox_to_centroid(list_boxes, list_masks)
+        print(list_obj_centroids)
+        # select object and affordance to project to 3D
+        obj_id = 6 # cup
+        aff_id = 1  # grasp affordance
+        
+        selected_obj_aff = select_object_and_aff(list_obj_centroids, obj_id, aff_id) 
+        print(selected_obj_aff)
+        # get depth value from depth map                        
+        dval = arr_depth[selected_obj_aff[3], selected_obj_aff[2]]
+        print(selected_obj_aff[3], selected_obj_aff[2])
+        if dval != 'nan':
+            # find 3D point
+            p3Dc_camera = project_to_3D(selected_obj_aff[2], selected_obj_aff[3], dval, ic)
+            print('Center relative to camera:', p3Dc_camera)
+            p3Dc_camera = np.append(p3Dc_camera, 1)
+            p3Dc_marker = np.dot(camera_to_marker, p3Dc_camera)
+            print('Center relative to marker:', p3Dc_marker)
+            obj_pose_3D = PoseStamped()
+            obj_pose_3D.header.frame_id = "camera_depth_optical_frame"
+            
+            obj_pose_3D.pose.position.x = p3Dc_marker[0]
+            obj_pose_3D.pose.position.y = p3Dc_marker[1]
+            obj_pose_3D.pose.position.z = p3Dc_marker[2]
+            obj_pose_3D.pose.orientation.x = 0
+            obj_pose_3D.pose.orientation.y = 0
+            obj_pose_3D.pose.orientation.z = 0
+            obj_pose_3D.pose.orientation.w = 1 ## no rotation
+            # publish pose
+            pub_obj_pose_3D.publish(obj_pose_3D)
