@@ -1,0 +1,5 @@
+(define (problem handy_vision)
+    (:domain handy)
+    (:objects arm cup )
+    (:init (free arm) (CONTAINABLE cup) (GRASPABLE cup) )
+    (:goal (and (contains bowl cup))))

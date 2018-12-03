@@ -1,0 +1,5 @@
+(define (domain handy)
+    (:predicates (GRASPABLE( ?x)
+
+    (:action pickup :parameters(?x)
+        :precondition GRASPABLE( ?x)
