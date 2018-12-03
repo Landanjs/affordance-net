@@ -42,17 +42,19 @@ from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Pose, Point, PoseStamped
 from sensor_msgs.msg import Image, PointField, PointCloud2
 import sensor_msgs.point_cloud2 as pc2
+from handy_experiment.msg import action_msg
 from std_msgs import msg
 import cv_bridge
 import matplotlib.pyplot as plt
 #from ros_image_io import ImageIO
 
 
+
 # start ros node and imageio
 rospy.init_node('AffordanceNet_Node')
-pub_obj_pose_3D = rospy.Publisher("vs_obj_pose_3D", PoseStamped) # pose of object in camera frame
+#pub_obj_pose_3D = rospy.Publisher("vs_obj_pose_3D", PoseStamped) # pose of object in camera frame
 pub_point_cloud = rospy.Publisher('transformed_scene', PointCloud2)
-
+pub_action_msg = rospy.Publisher('action_plan', action_msg)
 #KINECT_FX = 525
 #KINECT_FY = 525
 #KINECT_CX = 319.5
@@ -63,7 +65,7 @@ KINECT_FY = 490.682
 KINECT_CX = 330.273
 KINECT_CY = 247.443
 
-CONF_THRESHOLD = 0.01
+CONF_THRESHOLD = 0.9
 good_range = 0.005
     
 # get current dir
@@ -200,7 +202,7 @@ def visualize_mask_asus(im, rois_final, rois_class_score, rois_class_ind, masks,
     if rois_final.shape[0] == 0:
         print 'No object detection!'
         return list_bboxes, list_masks
-    print(rois_class_score[:, -1])
+    
     inds = np.where(rois_class_score[:, -1] >= thresh)[0]
     if len(inds) == 0:
         print 'No detected box with probality > thresh = ', thresh, '-- Choossing highest confidence bounding box.'
@@ -403,19 +405,18 @@ if __name__ == '__main__':
             
     else:
         rgb =  rospy.wait_for_message("/camera/rgb/image_color", Image)
+                
         # would this receive data corresponding to different samples or will the queueing help this?
         depth = rospy.wait_for_message("/camera/depth_registered/image_raw", Image)
     
         bridge = cv_bridge.CvBridge()
         rgb = bridge.imgmsg_to_cv2(rgb, desired_encoding="passthrough")
+        print(rgb.shape)
         depth = bridge.imgmsg_to_cv2(depth, desired_encoding="passthrough")
         arr_rgb = np.asarray(rgb[:, :, :])
-
-        arr_rgb = np.concatenate((arr_rgb[:, :, 2:], arr_rgb[:, :, 1:2], arr_rgb[:, :, 0:1]), axis=2)
         plt.imshow(arr_rgb)
         plt.show()
         arr_depth = np.asarray(depth[:, :])
-        
         if args.sim:
             np.save('rgb.npy', arr_rgb)
             np.save('depth.npy', arr_depth)
@@ -430,8 +431,28 @@ if __name__ == '__main__':
         list_boxes, list_masks = run_affordance_net_asus(net, arr_rgb)
         print 'len list boxes: ', len(list_boxes)
         list_obj_centroids = convert_bbox_to_centroid(list_boxes, list_masks)
+        write_pddl('../../ws_handy/pddl', list_obj_centroids)
+        # find plan (alternative to run python scripts from python scripts?
+        subprocess.call(['../../fast-downward/fast-downward.py',
+                        '../../ws_handy/pddl/domain.pddl',
+                        '../../ws_handy/pddl/auto_problem.pddl',
+                        '--search', 'astar(blind())'])
 
-    width, height = arr_rgb.shape[0:2]
+        # parse the plan generated from the .pddl files
+        plan = []
+        with open('../../fast-downward/sas_plan') as f:
+            for i, line in enumerate(f.readlines()[:-1]):
+                elements = line.split(' ')
+                pddl_action = ACTION_INDS[elements[0][1:]]
+                plan.append([pddl_action])
+                for element in elements:
+                    # remove last parantheses
+                    obj = element.split(')')[0]
+                    if obj in OBJ_INDS:
+                        plan[i].append(OBJ_INDS[obj])
+            print(plan)
+            
+    width, height = arr_rgb.shape[:2]
     rows = np.arange(0, height)
     cols = np.arange(0, width)
 
@@ -444,8 +465,7 @@ if __name__ == '__main__':
     # make homogeneous coordinates
     coords_hom = np.concatenate([coords_3D/1000, np.ones((1, width*height))], axis=0)
     
-    #coords_cam = np.dot(camera_to_marker, coords_hom) # 4 x N
-    coords_cam = coords_hom
+    coords_cam = np.dot(camera_to_marker, coords_hom) # 4 x N
 
     # Replace 1s with rgb values
     arr_rgb = arr_rgb.astype(int)
@@ -463,42 +483,47 @@ if __name__ == '__main__':
     h.frame_id = '/affordance_net'
 
     pc2_msg = pc2.create_cloud(h, fields, coords_cam.T)
-        
-    for _ in range(len(list_boxes)*1000):
-        # get array of all pixel coordinates
 
-        pub_point_cloud.publish(pc2_msg)
-                                  
-        print('List object centroids:', list_obj_centroids)
-        # select object and affordance to project to 3D
-        obj_id = 6 # cup
-        aff_id = 9  # grasp affordance
-        
-        selected_obj_aff = select_object_and_aff(list_obj_centroids, obj_id, aff_id) 
-        print(selected_obj_aff)
-        # get depth value from depth map    
-        dval = arr_depth[selected_obj_aff[3], selected_obj_aff[2]].astype(float)
-        print(selected_obj_aff[3], selected_obj_aff[2], dval)
-        print(coords[:, selected_obj_aff[3]*640 + selected_obj_aff[2]])
-        if dval != 'nan':
-            # find 3D point
-            p3Dc_camera = project_to_3D(selected_obj_aff[2], selected_obj_aff[3], dval/1000)
-            print('Center relative to camera:', p3Dc_camera)
-            print(coords_3D[:, selected_obj_aff[3]*640 + selected_obj_aff[2]])
-            p3Dc_camera = np.append(p3Dc_camera, 1)
-            p3Dc_marker = np.dot(camera_to_marker, p3Dc_camera)
-            print('Center relative to marker:', p3Dc_marker)
-            obj_pose_3D = PoseStamped()
-            obj_pose_3D.header.frame_id = "camera_depth_optical_frame"
+    # determine object centroid based on desired object and affordances
+    # how to determine desired affordances? determined by the action (preconditions)
+    action_list = action_msg()
+    action_list.header.frame_id = "camera_depth_optical_frame"
+    for action in plan:
+        action_list.action.append(action[0])
+        print(list_obj_centroids)
+        for arg, obj in enumerate(action[1:]):
+            # if pickup, use grasp (9)
+            if action[0] == 0:
+                _, _, width, height = select_object_and_aff(list_obj_centroids, obj, 9)
+                # get depth
+            if action[1] == 1:
+                # check if it is the 2 argument (first is irrelevant)
+                if arg == 1:
+                    print('Before bowl', obj)
+                    _, _, width, height = select_object_and_aff(list_obj_centroids, obj, 1)
+            print(width, height)
+            depth = arr_depth[height, width].astype(float) / 1000
+
+            # TODO: check for null depth (?)
+            coords_cam = project_to_3D(width, height, depth)
+            coords_3D = np.dot(camera_to_marker, np.append(coords_cam, 1))
+            print(coords_3D)
+            obj_pose_3D = Pose()
+            obj_pose_3D.position.x = round(coords_3D[0], 2) + 0.3
+            obj_pose_3D.position.y = round(coords_3D[1], 2) + 0.3 - 0.05
+            obj_pose_3D.position.z = round(coords_3D[2], 2) - 0.12
+            obj_pose_3D.orientation.x = 0
+            obj_pose_3D.orientation.y = 0
+            obj_pose_3D.orientation.z = 0
+            obj_pose_3D.orientation.w = 1
+
+            action_list.pose.append(obj_pose_3D)
             
-            obj_pose_3D.pose.position.x = round(p3Dc_marker[0], 2) + 0.3 
-            obj_pose_3D.pose.position.y = round(p3Dc_marker[1], 2) + 0.3 - 0.05
-            obj_pose_3D.pose.position.z = round(p3Dc_marker[2], 2) - 0.12
-            obj_pose_3D.pose.orientation.x = 0
-            obj_pose_3D.pose.orientation.y = 0
-            obj_pose_3D.pose.orientation.z = 0
-            obj_pose_3D.pose.orientation.w = 1 ## no rotation
-            # publish pose
-            pub_obj_pose_3D.publish(obj_pose_3D)
+            
+    print(action_list)
+    while(1):
+        pub_point_cloud.publish(pc2_msg)
+        
+        pub_action_msg.publish(action_list)
 
         

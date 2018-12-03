@@ -18,9 +18,9 @@ def aruco_camPose(image):
         aruco_dict_CL = aruco.Dictionary_get(aruco.DICT_ARUCO_ORIGINAL)
 
         corners_CL, ids_CL, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict_CL, parameters=parameters)
-        cameraMatrix = np.array([[494.042, 0.0, 330.273], [0.0, 490.682, 247.443], [0.0, 0.0, 1.0]])  # get the camera matrix after camera calibration calibrateCamera()
+        cameraMatrix = np.array([[525, 0.0, 319.5], [0.0, 525, 239.5], [0.0, 0.0, 1.0]])  # get the camera matrix after camera calibration calibrateCamera()
         #distCoeffs = np.array([0.15190073, -0.8267655, 0.00985276, -0.00435892, 1.58437205])  #
-        distCoeffs = np.array([0.0802, -0.213152, -0.006986, -0.001381, 0])
+        distCoeffs = np.array([0, 0, 0, 0, 0])
 
         markerLength_CL = 0.06
         M_CL = np.zeros((4, 4))
