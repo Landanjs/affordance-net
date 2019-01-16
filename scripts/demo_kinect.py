@@ -464,7 +464,7 @@ if __name__ == '__main__':
 
     pc2_msg = pc2.create_cloud(h, fields, coords_cam.T)
         
-    for _ in range(len(list_boxes)*1000):
+    for _ in range(len(list_boxes)*100000):
         # get array of all pixel coordinates
 
         pub_point_cloud.publish(pc2_msg)
